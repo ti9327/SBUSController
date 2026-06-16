@@ -1964,6 +1964,7 @@ function setBadge(on) {
 //  Config
 // =============================================================================
 function applyCfg(msg) {
+  if (msg.ver != null) cfg.ver = msg.ver;   // stamp exports with the firmware's cfg version
   cfg.rx     = msg.rx    || 1;
   cfg.ry     = msg.ry    || 2;
   cfg.ly     = msg.ly    || 3;
@@ -2772,21 +2773,49 @@ function getDTG() {
 
 // ── Export: fetch the saved JSON from the ESP and trigger a browser download ──
 function exportConfig() {
-  fetch('/cfg')
-    .then(r => { if (!r.ok) throw new Error('No config'); return r.blob(); })
-    .then(blob => {
-      const url = URL.createObjectURL(blob);
-      const a   = document.createElement('a');
-      a.href = url;
-      a.download = `sbus_config_${getDTG()}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-    })
-    .catch(e => {
-      const el = document.getElementById('importStatus');
-      el.style.color = 'var(--red)';
-      el.textContent = 'Export failed: ' + e.message;
-    });
+  const el = document.getElementById('importStatus');
+  // Build the export from the in-memory cfg so it works over BOTH transports.
+  // The old fetch('/cfg') hit the ESP's HTTP server, which only exists when the
+  // board itself serves the page over WiFi — over USB Serial (page loaded from
+  // GitHub Pages / file://) there's no server, so the fetch failed with
+  // "No config".  cfg is kept current by applyCfg() on either transport.
+  if (!cfg || !Array.isArray(cfg.sw) || !cfg.sw.length) {
+    el.style.color = 'var(--red)';
+    el.textContent = 'Export failed: no config loaded yet — wait for CONNECTED.';
+    return;
+  }
+  // Mirror the firmware's saved-file shape (the same fields importConfig reads
+  // back), dropping runtime-only fields (sw.pos / sl.pct / tr.cur) that aren't
+  // part of a saved config.
+  const out = {
+    ver:    cfg.ver || 3,
+    rx: cfg.rx, ry: cfg.ry, ly: cfg.ly, lx: cfg.lx,
+    sbus24: cfg.sbus24,
+    sw:  cfg.sw.map(s => ({l:s.l, c:s.c, t:s.t, d:s.d, v:s.v})),
+    sl:  (cfg.sl  || []).map(s => ({l:s.l, c:s.c})),
+    tr:  (cfg.tr  || []).map(t => ({l:t.l, c:t.c, s:t.s, m:t.m, vL:t.vL, vR:t.vR})),
+    btn: (cfg.btn || []).map(b => ({l:b.l, c:b.c, v:b.v})),
+    lua: (cfg.lua || []).map(b => ({l:b.l, c:b.c, v:b.v, k:b.k})),
+    aMin: cfg.aMin, aMax: cfg.aMax, aRev: cfg.aRev,
+    wifiPref: cfg.wifiPref,
+    wifiNets: (cfg.wifiNets || []).map(n => ({s:n.s, p:n.p})),
+    pwm: (cfg.pwm || []).map(p => ({c:p.c})),
+    pwmExt: cfg.pwmExt
+  };
+  try {
+    const blob = new Blob([JSON.stringify(out)], {type:'application/json'});
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url;
+    a.download = `sbus_config_${getDTG()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    el.style.color = 'var(--green)';
+    el.textContent = '✓ Exported.';
+  } catch(e) {
+    el.style.color = 'var(--red)';
+    el.textContent = 'Export failed: ' + e.message;
+  }
 }
 
 // ── Import: read a JSON file and send it as a cfg WS message ─────────────────
