@@ -242,8 +242,8 @@ async function flashFirmware(port, { onProgress, onLog, onStatus, eraseNvs = fal
   // them is reliable on BOTH blank and already-programmed boards.
   let imagesToFlash = flashImages.slice();
   onLog(eraseNvs
-    ? 'Full wipe — flashing bootloader + partitions + app (NVS will be erased).'
-    : 'Update — flashing bootloader + partitions + app (NVS preserved).');
+    ? 'Full wipe — flashing bootloader + partitions + app (saved config will be erased).'
+    : 'Update — flashing bootloader + partitions + app (saved config preserved — LittleFS untouched).');
 
   // ── Step 3c: optionally prepend NVS + otadata erase images ────
   // Partition layout (PartitionScheme=min_spiffs):
@@ -254,16 +254,26 @@ async function flashFirmware(port, { onProgress, onLog, onStatus, eraseNvs = fal
   // BOTH otadata sectors MUST be erased: a stale OTA pointer to ota_1 would
   // make the bootloader boot a non-existent ota_1 → OTA-rollback reboot loop.
   if (eraseNvs) {
-    const nvsBlank     = new ArrayBuffer(0x5000);  // NVS: 20 KB @ 0x9000
-    const otadataBlank = new ArrayBuffer(0x2000);  // otadata: 8 KB @ 0xE000
+    // SBUSController stores its config in LittleFS (the "spiffs" partition),
+    // NOT in NVS — so a Full Wipe must erase THAT to actually reset config.
+    // In the min_spiffs scheme the spiffs partition is 128 KB @ 0x3D0000
+    // (esp32 arduino core's min_spiffs.csv). Filling it with 0xFF leaves it
+    // unformatted, so the firmware's LittleFS.begin(true) reformats it fresh.
+    // NVS + otadata are also erased for a true factory state (NVS is unused by
+    // this firmware today, but cleared for completeness / recovery).
+    const nvsBlank     = new ArrayBuffer(0x5000);   // NVS:      20 KB @ 0x9000
+    const otadataBlank = new ArrayBuffer(0x2000);   // otadata:   8 KB @ 0xE000
+    const fsBlank      = new ArrayBuffer(0x20000);  // LittleFS: 128 KB @ 0x3D0000 (the saved config)
     new Uint8Array(nvsBlank).fill(0xFF);
     new Uint8Array(otadataBlank).fill(0xFF);
+    new Uint8Array(fsBlank).fill(0xFF);
     imagesToFlash = [
-      { buf: nvsBlank,     address: 0x9000 },
-      { buf: otadataBlank, address: 0xE000 },
+      { buf: nvsBlank,     address: 0x9000   },
+      { buf: otadataBlank, address: 0xE000   },
+      { buf: fsBlank,      address: 0x3D0000 },
       ...imagesToFlash,
     ];
-    onLog('NVS (0x9000, 20 KB) and OTA data (0xE000, 8 KB) will be erased.');
+    onLog('Erasing saved config (LittleFS @ 0x3D0000, 128 KB), NVS (0x9000) and OTA data (0xE000).');
   }
 
   const totalBytes = imagesToFlash.reduce((sum, img) => sum + img.buf.byteLength, 0);

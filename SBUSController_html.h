@@ -1118,7 +1118,7 @@ static const char HTML[] PROGMEM = R"rawhtml(<!DOCTYPE html>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
         <button id="btn-fw-flash" class="fw-btn fw-btn-update"
-          title="Writes new firmware while preserving your saved config (NVS).">&#x2B06; Update Firmware</button>
+          title="Writes new firmware while preserving your saved config (LittleFS is left untouched).">&#x2B06; Update Firmware</button>
         <button id="btn-fw-wipe" class="fw-btn fw-btn-wipe"
           title="Erases EVERYTHING — bootloader, partitions, app, and saved config. First-time programming or recovery.">&#x26A0; Full Wipe &amp; Flash</button>
         <span id="fw-status" style="font-size:.72rem;color:var(--muted);">Idle.</span>
@@ -1649,8 +1649,17 @@ async function runFirmwareFlash({ eraseNvs, sourceBtn, label, defaultLabel }) {
   btnFlash.disabled = true; btnWipe.disabled = true;
   if (btnTrans) btnTrans.disabled = true;     // block transport switch mid-flash
   sourceBtn.textContent = label;
-  appendLog(eraseNvs ? '⚠ Full wipe mode — NVS and OTA data will be erased.'
-                     : 'Update mode — NVS preserved.');
+  appendLog(eraseNvs ? '⚠ Full wipe mode — saved config (LittleFS), NVS and OTA data will be erased.'
+                     : 'Update mode — saved config preserved (LittleFS untouched).');
+
+  // Safety net: download a backup of the current saved config before flashing.
+  // Even though Update preserves LittleFS, a one-time partition-layout change
+  // (or a Full Wipe) can reset it — this guarantees you can always re-import.
+  // Only when a config is actually loaded from the board.
+  if (cfg && Array.isArray(cfg.sw) && cfg.sw.length) {
+    try { exportConfig(); appendLog('↓ Backed up current config to your Downloads — re-import it if anything resets.'); }
+    catch (_) {}
+  }
 
   let flashPort   = null;
   let resumeAfter = false;
@@ -1728,7 +1737,7 @@ function initFirmwarePanel() {
   if (btnFlash) btnFlash.addEventListener('click', e =>
     runFirmwareFlash({ eraseNvs:false, sourceBtn:e.currentTarget, label:'Updating…', defaultLabel:'⬆ Update Firmware' }));
   if (btnWipe) btnWipe.addEventListener('click', e => {
-    const ok = window.confirm('Full Wipe & Flash will ERASE all saved settings on the board (NVS) ' +
+    const ok = window.confirm('Full Wipe & Flash will ERASE all saved settings on the board (LittleFS config) ' +
       'and write a factory-fresh firmware image.\n\nContinue?');
     if (!ok) return;
     runFirmwareFlash({ eraseNvs:true, sourceBtn:e.currentTarget, label:'Wiping…', defaultLabel:'⚠ Full Wipe & Flash' });
